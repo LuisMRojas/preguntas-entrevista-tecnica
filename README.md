@@ -19,6 +19,13 @@ Repositorio de estudio personal. Cada tema tiene:
 | 3 | Cómo evitar memory leaks con RxJS | [angular/03-memory-leaks-rxjs.md](angular/03-memory-leaks-rxjs.md) |
 | 4 | Inyección de dependencias y alcance de los providers | [angular/04-inyeccion-dependencias-providers.md](angular/04-inyeccion-dependencias-providers.md) |
 
+### .NET / C#
+| # | Tema | Archivo |
+|---|------|---------|
+| 1 | async/await y Task: qué pasa al hacer `await`, `Task` vs `Thread` | [dotnet/01-async-await-task-vs-thread.md](dotnet/01-async-await-task-vs-thread.md) |
+| 2 | Inyección de dependencias: Singleton, Scoped y Transient (comparado con Angular) | [dotnet/02-inyeccion-dependencias-lifetimes.md](dotnet/02-inyeccion-dependencias-lifetimes.md) |
+| 3 | IEnumerable vs IQueryable (LINQ y EF Core) | [dotnet/03-ienumerable-vs-iqueryable.md](dotnet/03-ienumerable-vs-iqueryable.md) |
+
 ## Cómo estudiar
 
 - Lee la **respuesta corta** y trata de decirla en voz alta sin mirar.
@@ -29,3 +36,6 @@ Repositorio de estudio personal. Cada tema tiene:
 - [ ] Observable / Subject / BehaviorSubject
 - [ ] Memory leaks con RxJS
 - [ ] DI y providers
+- [ ] async/await y Task vs Thread
+- [ ] DI en .NET: Singleton / Scoped / Transient
+- [ ] IEnumerable vs IQueryable

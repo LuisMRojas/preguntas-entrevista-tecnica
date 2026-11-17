@@ -2,6 +2,8 @@
 
 > **Pregunta típica:** "¿Cómo funciona la inyección de dependencias en Angular? ¿Qué diferencia hay entre `providedIn: 'root'`, proveer en una ruta y proveer en un componente?"
 
+> 🔗 **Relacionado:** [.NET: Singleton, Scoped y Transient](../dotnet/02-inyeccion-dependencias-lifetimes.md)
+
 ---
 
 ## Respuesta corta (para decir en entrevista)
