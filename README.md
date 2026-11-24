@@ -31,7 +31,7 @@ Repositorio de estudio personal. Cada tema tiene:
 |---|------|---------|
 | 1 | Docker: image vs container y `Dockerfile` | [devops/01-docker-image-vs-container.md](devops/01-docker-image-vs-container.md) |
 | 2 | Kubernetes: Pod, Deployment y Service | [devops/02-kubernetes-pod-deployment-service.md](devops/02-kubernetes-pod-deployment-service.md) |
-| 3 | AWS S3 + mi migración de MySQL a S3 (historia STAR, **pendiente de completar**) | [devops/03-aws-s3-migracion-mysql.md](devops/03-aws-s3-migracion-mysql.md) |
+| 3 | AWS S3 + mi migración de logs de auditoría de MySQL a S3 (historia STAR, faltan algunos detalles) | [devops/03-aws-s3-migracion-mysql.md](devops/03-aws-s3-migracion-mysql.md) |
 
 ## Cómo estudiar
 

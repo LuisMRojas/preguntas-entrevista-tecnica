@@ -1,10 +1,8 @@
-# 3. AWS S3 + mi migración de MySQL a S3
+# 3. AWS S3 + mi migración de logs de auditoría de MySQL a S3
 
 > **Preguntas típicas:**
 > - "¿Qué es S3 y cuándo lo usarías en lugar de una base de datos?"
-> - "Cuéntame un proyecto del que estés orgulloso / un problema técnico difícil que hayas resuelto."
-
-> ⚠️ **Estado:** la parte técnica de S3 está completa. La sección **"Mi historia"** es una **plantilla**: todo lo que dice `[COMPLETAR]` tiene que salir de **tu experiencia real**. No inventes números: si no los recuerdas exactos, usa aproximaciones honestas ("cerca de 200 GB", "de minutos a segundos").
+> - "Cuéntame un proyecto del que estés orgulloso / algo que hayas aprendido en un proyecto."
 
 ---
 
@@ -12,7 +10,7 @@
 
 ### Respuesta corta (para decir en entrevista)
 
-> **Amazon S3** es un servicio de **almacenamiento de objetos**. No es un sistema de archivos ni una base de datos: guarda **objetos** (bytes + metadatos) dentro de **buckets** y cada objeto se identifica por una **key** (por ejemplo `invoices/2025/11/INV-1234.pdf`). Es prácticamente **ilimitado**, tiene una durabilidad de **11 nueves** (99,999999999 %) porque replica entre varias zonas de disponibilidad, se cobra por GB almacenado, por peticiones y por transferencia, y tiene **clases de almacenamiento** más baratas para datos que se acceden poco (Standard-IA, Glacier). Lo uso para **archivos y datos grandes o históricos**: documentos, imágenes, backups, logs, exportaciones. La base de datos relacional la dejo para **datos estructurados y transaccionales** que necesito consultar, filtrar y relacionar con SQL. El patrón típico es guardar el archivo en S3 y en la base de datos solo la **key y los metadatos**.
+> **Amazon S3** es un servicio de **almacenamiento de objetos**. No es un sistema de archivos ni una base de datos: guarda **objetos** (bytes + metadatos) dentro de **buckets** y cada objeto se identifica por una **key** (por ejemplo `audit-logs/2025/11/24/part-0001.json`). Es prácticamente **ilimitado**, tiene una durabilidad de **11 nueves** (99,999999999 %) porque replica entre varias zonas de disponibilidad, se cobra por GB almacenado, por peticiones y por transferencia, y tiene **clases de almacenamiento** más baratas para datos que se acceden poco (Standard-IA, Glacier). Lo uso para **archivos y datos grandes o históricos**: documentos, imágenes, backups, **logs**, exportaciones. La base de datos relacional la dejo para **datos estructurados y transaccionales** que necesito consultar, filtrar y relacionar con SQL.
 
 ### Conceptos clave
 
@@ -23,10 +21,10 @@
 | **Clases de almacenamiento** | Standard, Intelligent-Tiering, Standard-IA, Glacier Instant/Flexible/Deep Archive: más baratas para guardar, más caras o lentas para leer. |
 | **Lifecycle rules** | Mover objetos a clases más baratas o borrarlos automáticamente según su antigüedad. |
 | **Versioning** | Guarda versiones anteriores de un objeto. Protege contra borrados y sobrescrituras accidentales. |
+| **Object Lock** | Modo WORM (*write once, read many*): nadie puede modificar ni borrar un objeto durante un período. Muy usado en **auditoría** y cumplimiento normativo. |
 | **Seguridad** | IAM policies + bucket policies, **Block Public Access**, cifrado (SSE-S3 por defecto, SSE-KMS). |
-| **Presigned URL** | URL temporal firmada para subir o descargar un objeto **sin pasar el archivo por tu servidor** y sin hacer público el bucket. |
+| **Presigned URL** | URL temporal firmada para subir o descargar un objeto sin pasar el archivo por tu servidor y sin hacer público el bucket. |
 | **Consistencia** | Desde 2020 es **consistencia fuerte** de lectura después de escritura. |
-| **Multipart upload** | Subir archivos grandes en partes, en paralelo y con reintentos. |
 | **Consultas** | **Athena** permite consultar con SQL archivos CSV/JSON/**Parquet** guardados en S3. |
 
 ### S3 vs base de datos relacional (MySQL)
@@ -35,91 +33,147 @@
 |---|---|---|
 | Modelo | Tablas, filas, relaciones | Objetos key → bytes |
 | Consultas | SQL, índices, joins, transacciones | GET/PUT por key, listar por prefijo (o Athena para análisis) |
-| Bueno para | Datos transaccionales, pequeños y consultables | Archivos, blobs, histórico, backups, data lake |
+| Bueno para | Datos transaccionales, pequeños y consultables | Archivos, blobs, **histórico**, **logs**, backups, data lake |
 | Escala de almacenamiento | Limitada por el disco/instancia; crecer es caro | Prácticamente ilimitada |
 | Costo por GB | Alto (disco de BD + réplicas + backups) | Muy bajo, y aún menor con IA/Glacier |
-| Archivos grandes (BLOB) | Inflan la BD, los backups y la replicación | Diseñado para eso |
 
-### Ejemplo de código: subida con presigned URL (.NET)
+### ¿Por qué los logs de auditoría encajan tan bien en S3?
+
+| Característica de un log de auditoría | Por qué encaja con S3 |
+|---|---|
+| **Solo se agregan registros**, nunca se modifican | S3 es ideal para escribir objetos y no tocarlos más (y con Object Lock se puede garantizar). |
+| **Crece sin parar** (cada movimiento genera un registro) | Almacenamiento prácticamente ilimitado y barato. |
+| **Se consulta poco**, y casi siempre **por rango de fechas** | Si las keys llevan la fecha (`año/mes/día`), se lee solo el prefijo necesario. |
+| No necesita joins ni transacciones | No hace falta pagar una base relacional para guardarlo. |
+| Lo viejo casi no se lee | Lifecycle rules → Standard-IA / Glacier. |
+
+### Ejemplo de código: escribir un lote de eventos de auditoría (.NET)
 
 ```csharp
-// El backend NO recibe el archivo: genera una URL firmada y el frontend sube directo a S3
-app.MapPost("/documents/upload-url", (UploadRequest req, IAmazonS3 s3, ICurrentUser user) =>
+public class S3AuditLogWriter(IAmazonS3 s3, TimeProvider clock) : IAuditLogWriter
 {
-    var key = $"documents/{user.Id}/{Guid.NewGuid()}/{req.FileName}";
-    var url = s3.GetPreSignedURL(new GetPreSignedUrlRequest
+    private const string Bucket = "mi-app-audit-logs";
+
+    public async Task WriteBatchAsync(IReadOnlyList<AuditEvent> events, CancellationToken ct)
     {
-        BucketName  = "mi-app-documents",
-        Key         = key,
-        Verb        = HttpVerb.PUT,
-        Expires     = DateTime.UtcNow.AddMinutes(10),
-        ContentType = req.ContentType,
-    });
-    return Results.Ok(new { url, key }); // después el frontend confirma y guardo la key en la BD
-});
+        var now = clock.GetUtcNow();
+        // Prefijo por fecha → las búsquedas por fecha solo leen lo necesario
+        var key = $"audit-logs/{now:yyyy/MM/dd}/{now:HHmmss}-{Guid.NewGuid()}.jsonl";
+
+        var body = string.Join('\n', events.Select(e => JsonSerializer.Serialize(e))); // JSON Lines
+
+        await s3.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName  = Bucket,
+            Key         = key,
+            ContentBody = body,
+            ContentType = "application/x-ndjson",
+        }, ct);
+    }
+}
 ```
+
+> En pruebas, el `IAmazonS3` apunta a un **mock local de S3** (por ejemplo LocalStack o MinIO) cambiando el `ServiceURL`. Así se prueba la integración sin tocar AWS real ni generar costos.
 
 ---
 
 ## Parte B: Mi historia (la pregunta de comportamiento)
 
-### Cómo contarla: formato STAR
+### Los hechos (lo que realmente pasó)
 
-| Parte | Qué cuentas | Tiempo |
-|---|---|---|
-| **S**ituación | Contexto: empresa/sistema, qué guardaba MySQL, cuál era el dolor | 20–30 s |
-| **T**area | Cuál era **tu** responsabilidad y el objetivo | 10–15 s |
-| **A**cción | Qué decidiste, **por qué**, qué alternativas descartaste, cómo migraste sin romper nada | 60–90 s |
-| **R**esultado | Impacto medible + qué aprendiste | 20–30 s |
+| | |
+|---|---|
+| **Qué se migró** | Los **logs de auditoría**: registrábamos **cada movimiento** de los usuarios en MySQL. |
+| **El problema** | La base de datos se volvió **muy grande**, empezó a ser **costosa** por el volumen y las **búsquedas por fechas antiguas eran lentas**. |
+| **El diseño** | Lo definió el **arquitecto** del equipo. Yo no conocía S3 y fue un gran aprendizaje. |
+| **Cómo se validó** | Todo se probó en **ambientes de prueba con un mock de S3**. |
+| **Resultado** | La base de datos **se redujo muchísimo** y los **tiempos de carga de datos mejoraron**. No hay cifras exactas. |
+| **Lo que aprendí** | A elegir el almacenamiento según cómo se usa el dato, y que **hacen falta más pruebas en ambientes de prueba**, porque **no todo salió a la primera**. |
 
-> Total: 2–3 minutos. Habla en **primera persona** ("yo decidí", "yo implementé"), aunque haya sido trabajo en equipo; aclara qué parte fue tuya.
+### Versión para decir en voz alta (~2 minutos)
 
-### Plantilla para completar
+> **Situación.** En [COMPLETAR: empresa o tipo de sistema] teníamos un sistema que guardaba en MySQL un **log de auditoría de cada movimiento** que hacían los usuarios. Como se registraba absolutamente todo, esa información creció muchísimo: la base de datos se volvió muy grande, el costo empezó a subir por el volumen, y las búsquedas de registros de fechas antiguas eran lentas.
+>
+> **Tarea.** El arquitecto del equipo propuso sacar esos logs de la base relacional y moverlos a **Amazon S3**, y yo participé en [COMPLETAR: tu parte, por ejemplo "implementar la integración con S3", "la migración de los datos existentes" o "las pruebas"].
+>
+> **Acción.** Yo no conocía S3, así que lo primero fue entender el porqué del diseño: un log de auditoría **solo se escribe y casi nunca se modifica**, **crece sin parar** y se consulta poco, normalmente **por fechas**. Eso encaja muy bien con un almacenamiento de objetos barato y prácticamente ilimitado como S3, y deja MySQL para los datos transaccionales. Para no arriesgar producción, **validamos todo en ambientes de prueba usando un mock de S3**, así podíamos probar la escritura y la lectura de los logs sin depender de AWS real.
+>
+> **Resultado.** La base de datos **se redujo de forma muy significativa** y los **tiempos de carga de datos mejoraron** de forma notoria. No tengo las cifras exactas, pero la diferencia se notó claramente.
+>
+> **Aprendizaje.** Me quedo con dos cosas. Primero, a **elegir el almacenamiento según cómo se usa el dato**, en lugar de meter todo en la base relacional por costumbre. Y segundo, que **no todo salió a la primera**: [COMPLETAR: un ejemplo concreto]. Por eso hoy invertiría todavía más en pruebas, en un ambiente lo más parecido posible a producción, antes de migrar.
 
-**Situación**
-- [COMPLETAR] ¿Qué sistema/producto era y para qué tipo de empresa o cliente?
-- [COMPLETAR] ¿Qué se guardaba en MySQL que terminó en S3? (¿archivos como BLOB: PDFs, imágenes, adjuntos? ¿tablas históricas o logs que crecían sin parar? ¿otra cosa?)
-- [COMPLETAR] ¿Cuál era el problema concreto? (tamaño de la BD, backups lentos, costo, consultas lentas, réplica atrasada, disco lleno, restauraciones que tardaban horas...)
-- [COMPLETAR] Números del "antes", aunque sean aproximados: tamaño de la BD/tabla, cantidad de registros/archivos, tiempo de backup, costo mensual, latencia.
+### Lo que todavía falta completar (rápido, pero importante)
 
-**Tarea**
-- [COMPLETAR] ¿Qué te pidieron o qué propusiste tú? ¿Cuál era el criterio de éxito? (sin caída, sin perder datos, bajar costo, etc.)
+Te lo van a preguntar casi seguro, así que tenlo claro antes de la entrevista:
 
-**Acción** (aquí se gana la entrevista: las **decisiones** y el **porqué**)
-- [COMPLETAR] Diseño: ¿cómo quedó? (por ejemplo: archivo en S3 + key y metadatos en MySQL; o datos históricos exportados a S3 en CSV/Parquet y consultados con Athena)
-- [COMPLETAR] Alternativas que consideraste y por qué las descartaste (¿EFS? ¿agrandar la instancia RDS? ¿particionar la tabla? ¿otra base de datos?)
-- [COMPLETAR] Estructura de keys / prefijos que elegiste y por qué.
-- [COMPLETAR] Cómo migraste los datos existentes: ¿script/batch? ¿en lotes? ¿cuántos a la vez? ¿cómo reintentabas los fallos?
-- [COMPLETAR] Cómo evitaste la caída: ¿doble escritura (MySQL + S3) durante la transición? ¿feature flag para leer de S3? ¿lectura con fallback a MySQL?
-- [COMPLETAR] Cómo verificaste que no se perdió nada (conteos, checksums/MD5/ETag, muestreo, comparación de tamaños).
-- [COMPLETAR] Seguridad: ¿bucket privado? ¿presigned URLs? ¿cifrado? ¿permisos IAM mínimos?
-- [COMPLETAR] Costos: ¿usaste lifecycle rules o clases más baratas para lo antiguo?
-- [COMPLETAR] Cuándo y cómo limpiaste los datos viejos de MySQL (después de cuánto tiempo de validación).
+- [ ] **Empresa o tipo de sistema** (aunque sea genérico: "un sistema de gestión para un banco", "una plataforma de e-commerce"...).
+- [ ] **Tu parte exacta**: ¿qué hiciste tú con tus manos?
+- [ ] **Qué fue lo que no salió a la primera.** Es lo más importante que falta: un ejemplo concreto vale mucho más que "hubo problemas".
+- [ ] **Qué mock de S3 usaron** (¿LocalStack? ¿MinIO? ¿otro?).
+- [ ] **Cómo se consultan hoy los logs antiguos** (¿desde la app leyendo de S3? ¿con Athena? ¿se descargan cuando se necesitan?).
+- [ ] **Qué pasó con los datos viejos en MySQL**: ¿se migraron a S3 y luego se borraron? ¿solo se movió lo nuevo?
 
-**Resultado**
-- [COMPLETAR] Números del "después": tamaño de la BD, tiempo de backup, costo, rendimiento.
-- [COMPLETAR] Impacto en el negocio/equipo (por ejemplo, restauraciones más rápidas, se evitó comprar una instancia más grande...).
+### Sobre no tener números
 
-**Lo que aprendí** (siempre lo preguntan; ten 2 o 3 preparados)
-- [COMPLETAR] Algo técnico (por ejemplo, sobre migrar en lotes, idempotencia o validar antes de borrar).
-- [COMPLETAR] Algo que harías diferente hoy.
-- [COMPLETAR] Algo de proceso o comunicación (con el equipo, QA o negocio).
+No inventes cifras. Puedes decir:
 
-### Preguntas que te van a hacer después (prepara cada una)
+> "No tengo el número exacto, pero la tabla de auditoría era la más grande de la base y, al sacarla, el tamaño bajó de forma muy notoria."
 
-1. ¿Por qué S3 y no otra opción? ¿Qué alternativas evaluaste?
-2. ¿Cómo garantizaste que no se perdieron datos durante la migración?
-3. ¿Hubo caída del servicio? ¿Cómo la evitaste?
-4. ¿Qué pasa si se guarda el archivo en S3 pero falla el insert en MySQL (o al revés)? ¿Cómo manejas esa **inconsistencia**? (pista: orden de escritura, reintentos, proceso que limpia objetos huérfanos)
-5. ¿Cómo controlas quién puede ver o descargar los archivos?
-6. ¿Cuánto se ahorró? ¿Cómo lo mediste?
-7. ¿Qué salió mal o qué no salió como esperabas?
-8. Si tuvieras que hacerlo con 100 veces más datos, ¿qué cambiarías?
+Solo dilo si es cierto. Si puedes, pregúntale a un excompañero o estima un orden de magnitud ("cientos de GB", "millones de registros").
 
-### Errores a evitar al contarla
+> 💡 Evita decir "decreció **exponencialmente**". Técnicamente significa otra cosa y un entrevistador técnico lo puede notar. Di "**se redujo muchísimo**" o "**de forma muy significativa**".
 
-- Contarla solo como "moví datos de un lado a otro". Lo valioso son el **problema**, las **decisiones** y los **trade-offs**.
-- No tener números. Aunque sean aproximados, dan credibilidad.
-- Decir "nosotros" todo el tiempo y que no se entienda qué hiciste tú.
-- Inventar o exagerar: te van a pedir detalles y se nota.
+### Sobre "el diseño lo hizo el arquitecto"
+
+**No es algo malo**, siempre que lo cuentes bien. Lo que el entrevistador quiere ver es:
+1. Que **entiendes el porqué** del diseño (por eso está la tabla de "por qué los logs encajan en S3").
+2. Que **aprendes rápido** algo que no conocías.
+3. Qué fue **tu aporte** concreto.
+
+Frase útil:
+
+> "La decisión de arquitectura la tomó el arquitecto, pero yo me encargué de [tu parte], y para hacerlo bien tuve que entender a fondo por qué S3 era la mejor opción para este tipo de datos."
+
+---
+
+## Preguntas que te van a hacer después (con respuestas honestas)
+
+**1. ¿Por qué S3 y no otra opción?**
+> "El diseño lo propuso el arquitecto, pero entendí el razonamiento: los logs de auditoría solo se agregan, crecen sin parar y se consultan poco y por fechas. Mantenerlos en MySQL era pagar almacenamiento caro y tener índices enormes para datos que casi no se leen. S3 es mucho más barato por GB, no tiene límite práctico y, si se organizan las keys por fecha, se puede leer solo el rango necesario."
+
+**2. ¿Cómo te aseguraste de que no se perdieran datos?**
+> "Validamos todo en ambientes de prueba con un mock de S3 antes de tocar producción." Agrega aquí lo que hayan hecho para comparar (conteos de registros antes y después, revisión de muestras). **Si no lo recuerdas, no lo inventes.** Puedes sumarlo como aprendizaje: "hoy agregaría una verificación automática de conteos antes de borrar nada de MySQL".
+
+**3. ¿Hubo caída del servicio?**
+> [COMPLETAR con lo que pasó realmente.]
+
+**4. ¿Qué pasa si falla la escritura en S3?**
+Si no lo manejaron explícitamente, responde cómo lo harías hoy:
+> "Reintentos con backoff. Para no perder eventos de auditoría, los dejaría en una cola (por ejemplo SQS) o en una tabla temporal hasta confirmar que se guardaron en S3."
+
+**5. Los logs de auditoría son sensibles, ¿cómo los proteges?**
+Lo que corresponda a lo que hicieron, más lo que sumarías hoy:
+> "Bucket privado con Block Public Access, cifrado, permisos IAM mínimos (la app solo puede escribir y leer ese bucket) y, para auditoría, **Object Lock** para que nadie pueda modificar ni borrar los registros."
+
+**6. ¿Cuánto se ahorró?**
+> Usa la frase de la sección "Sobre no tener números".
+
+**7. ¿Qué salió mal?**
+> Tu ejemplo concreto + qué hicieron para resolverlo + qué cambiarías.
+
+**8. Si fueran 100 veces más datos, ¿qué cambiarías?**
+Respuesta de "lo que aprendí después":
+> "Organizaría las keys por fecha (`año/mes/día`), guardaría en lotes en lugar de un objeto por evento, usaría un formato columnar como **Parquet** y consultaría con **Athena**. Además agregaría lifecycle rules para mover lo antiguo a Glacier."
+
+**9. ¿Por qué no lo diseñaste tú?**
+> "En ese momento no conocía S3, y el arquitecto tenía la experiencia. Lo aproveché para aprender: hoy entiendo cuándo conviene un almacenamiento de objetos y cuándo una base relacional, y podría proponer un diseño así."
+
+---
+
+## Errores a evitar al contarla
+
+- Contarla solo como "moví datos de un lado a otro". Lo valioso es el **problema**, el **porqué** y lo que **aprendiste**.
+- Decir "nosotros" todo el tiempo sin que se entienda qué hiciste **tú**.
+- Inventar números o detalles: te van a pedir profundidad y se nota.
+- Decir solo "no todo salió a la primera" sin un ejemplo.
 - Olvidar el "qué aprendí".
