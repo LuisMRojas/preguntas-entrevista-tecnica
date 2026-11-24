@@ -26,6 +26,13 @@ Repositorio de estudio personal. Cada tema tiene:
 | 2 | Inyección de dependencias: Singleton, Scoped y Transient (comparado con Angular) | [dotnet/02-inyeccion-dependencias-lifetimes.md](dotnet/02-inyeccion-dependencias-lifetimes.md) |
 | 3 | IEnumerable vs IQueryable (LINQ y EF Core) | [dotnet/03-ienumerable-vs-iqueryable.md](dotnet/03-ienumerable-vs-iqueryable.md) |
 
+### DevOps / Cloud
+| # | Tema | Archivo |
+|---|------|---------|
+| 1 | Docker: image vs container y `Dockerfile` | [devops/01-docker-image-vs-container.md](devops/01-docker-image-vs-container.md) |
+| 2 | Kubernetes: Pod, Deployment y Service | [devops/02-kubernetes-pod-deployment-service.md](devops/02-kubernetes-pod-deployment-service.md) |
+| 3 | AWS S3 + mi migración de MySQL a S3 (historia STAR, **pendiente de completar**) | [devops/03-aws-s3-migracion-mysql.md](devops/03-aws-s3-migracion-mysql.md) |
+
 ## Cómo estudiar
 
 - Lee la **respuesta corta** y trata de decirla en voz alta sin mirar.
@@ -39,3 +46,7 @@ Repositorio de estudio personal. Cada tema tiene:
 - [ ] async/await y Task vs Thread
 - [ ] DI en .NET: Singleton / Scoped / Transient
 - [ ] IEnumerable vs IQueryable
+- [ ] Docker: image vs container
+- [ ] Kubernetes: Pod / Deployment / Service
+- [ ] S3 (técnico)
+- [ ] Historia de la migración MySQL → S3 (completar y practicar en voz alta)
