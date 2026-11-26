@@ -31,7 +31,15 @@ Repositorio de estudio personal. Cada tema tiene:
 |---|------|---------|
 | 1 | Docker: image vs container y `Dockerfile` | [devops/01-docker-image-vs-container.md](devops/01-docker-image-vs-container.md) |
 | 2 | Kubernetes: Pod, Deployment y Service | [devops/02-kubernetes-pod-deployment-service.md](devops/02-kubernetes-pod-deployment-service.md) |
-| 3 | AWS S3 + mi migración de logs de auditoría de MySQL a S3 (historia STAR, faltan algunos detalles) | [devops/03-aws-s3-migracion-mysql.md](devops/03-aws-s3-migracion-mysql.md) |
+| 3 | AWS S3 + mi migración de logs de auditoría de MySQL a S3 (historia STAR) | [devops/03-aws-s3-migracion-mysql.md](devops/03-aws-s3-migracion-mysql.md) |
+
+### Bases de datos (MySQL) · 🇬🇧 respuestas en inglés
+| # | Tema | Archivo |
+|---|------|---------|
+| 1 | Clustered vs non-clustered index, and when to add one | [databases/01-clustered-vs-nonclustered-index.md](databases/01-clustered-vs-nonclustered-index.md) |
+| 2 | Normalization, and when to denormalize | [databases/02-normalization-denormalization.md](databases/02-normalization-denormalization.md) |
+| 3 | ACID in a transaction | [databases/03-acid-transactions.md](databases/03-acid-transactions.md) |
+| 4 | How to find and fix a slow SQL query | [databases/04-slow-query-find-and-fix.md](databases/04-slow-query-find-and-fix.md) |
 
 ## Cómo estudiar
 
@@ -49,4 +57,8 @@ Repositorio de estudio personal. Cada tema tiene:
 - [ ] Docker: image vs container
 - [ ] Kubernetes: Pod / Deployment / Service
 - [ ] S3 (técnico)
-- [ ] Historia de la migración MySQL → S3 (completar y practicar en voz alta)
+- [ ] Historia de la migración MySQL → S3 (practicar en voz alta)
+- [ ] Clustered vs non-clustered index (in English)
+- [ ] Normalization / denormalization (in English)
+- [ ] ACID (in English)
+- [ ] Slow SQL query (in English)
